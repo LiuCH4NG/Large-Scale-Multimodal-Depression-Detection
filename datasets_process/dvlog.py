@@ -78,7 +78,7 @@ class DVlog(data.Dataset):
                             self.features.append(feature[t_start:t_start+f_length,:])
                             # print(feature[t_start:t_start+f_length,:].shape)
 
-        print(f"ALL:{len(self.labels)}, Positive:{np.sum(self.labels)}, Negative:{len(self.labels)-np.sum(self.labels)}")
+        # print(f"ALL:{len(self.labels)}, Positive:{np.sum(self.labels)}, Negative:{len(self.labels)-np.sum(self.labels)}")
 
     def is_sample(self, sample) -> bool:
         gender, fold = sample[3], sample[4]
@@ -91,10 +91,10 @@ class DVlog(data.Dataset):
         feature = self.features[i]
         label = self.labels[i]
         if self.transform is not None:
-            print("Transform 1")
+            # print("Transform 1")
             feature = self.transform(feature)
         if self.target_transform is not None:
-            print("Transform 2")
+            # print("Transform 2")
             label = self.target_transform(label)
         return feature, label
 

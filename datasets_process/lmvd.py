@@ -82,7 +82,7 @@ class LMVD(data.Dataset):
                             self.features.append(feature[t_start:t_start+f_length,:])
                             # print(feature[t_start:t_start+f_length,:].shape)
 
-        print(f"ALL: {len(self.labels)}, Positive: {np.sum(self.labels)}, Negative: {len(self.labels)-np.sum(self.labels)}")
+        # print(f"ALL: {len(self.labels)}, Positive: {np.sum(self.labels)}, Negative: {len(self.labels)-np.sum(self.labels)}")
 
     def is_sample(self, sample) -> bool:
         fold = sample[2]
