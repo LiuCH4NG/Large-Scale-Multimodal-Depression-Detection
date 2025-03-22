@@ -23,13 +23,10 @@ def train_epoch(
         train_loader, desc=f"Training epoch {current_epoch}/{total_epochs}",
         leave=False, unit="batch", disable=tqdm_able
     ) as pbar:
-        for x, y in pbar:
+        for x, y, mask in pbar:
            
-            # x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
-            # y_pred = net(x, mask)
-
-            x, y = x.to(device), y.to(device).unsqueeze(1)
-            y_pred = net(x, None)
+            x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
+            y_pred = net(x, mask)
 
             # loss = loss_fn(y_pred, y.to(torch.float32))
             loss = loss_fn(y_pred, y.to(torch.float32), net)
@@ -39,7 +36,7 @@ def train_epoch(
 
             sample_count += x.shape[0]
             running_loss += loss.item() * x.shape[0]
-            
+
             # binary classification with only one output neuron
             pred = (y_pred > 0.).int()
             correct_count += (pred == y).sum().item()
@@ -75,13 +72,10 @@ def val(
         with tqdm(
             val_loader, desc="Validating", leave=False, unit="batch", disable=tqdm_able
         ) as pbar:
-            for x, y in pbar:
+            for x, y, mask in pbar:
              
-                # x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
-                # y_pred = net(x, mask)
-
-                x, y = x.to(device), y.to(device).unsqueeze(1)
-                y_pred = net(x, None)
+                x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
+                y_pred = net(x, mask)
 
                 # loss = loss_fn(y_pred, y.to(torch.float32))
                 loss = loss_fn(y_pred, y.to(torch.float32), net)
