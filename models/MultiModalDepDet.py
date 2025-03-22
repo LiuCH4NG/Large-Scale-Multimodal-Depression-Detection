@@ -13,9 +13,7 @@ class MultiModalDepDet(BaseNet):
 
     def __init__(self, audio_input_size=161, video_input_size=161, mm_input_size=128, 
                  mm_output_sizes=[256,64], 
-                 d_ffn=1024, num_layers=8, dropout=0.1, activation='Swish',
-                 fusion='ia', num_heads=4,
-                 causal=False, mamba_config=None):
+                 fusion='ia', num_heads=4):
         super().__init__()
 
         self.conv_audio = nn.Conv1d(audio_input_size, mm_input_size, 1, padding=0, dilation=1, bias=False)
