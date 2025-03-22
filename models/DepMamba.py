@@ -4,16 +4,13 @@ Authors
 -------
 * Xilin Jiang 2024
 """
-
 import warnings
 from dataclasses import dataclass
 from typing import List, Optional
-
 import abc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 import speechbrain as sb
 from speechbrain.nnet.activations import Swish
 from speechbrain.nnet.attention import (
@@ -30,8 +27,6 @@ from mamba_ssm import Mamba
 from .mamba.bimamba import Mamba as BiMamba 
 from .mamba.mm_bimamba import Mamba as MMBiMamba 
 from .base import BaseNet
-
-
 
 class MMMambaEncoderLayer(nn.Module):
     def __init__(
@@ -234,7 +229,7 @@ class CoSSM(nn.Module):
         d_ffn=1024,
         activation='Swish',
         dropout=0.0,
-        kernel_size = 3,
+        kernel_size=3,
         causal=False,
         mamba_config=None
     ):
@@ -344,7 +339,8 @@ class EnSSM(nn.Module):
 
 class DepMamba(BaseNet):
 
-    def __init__(self, audio_input_size=161, video_input_size=161, mm_input_size=128, mm_output_sizes=[256,64], d_ffn=1024, num_layers=8, dropout=0.1, activation='Swish', causal=False, mamba_config=None):
+    def __init__(self, audio_input_size=161, video_input_size=161, mm_input_size=128, mm_output_sizes=[256,64], d_ffn=1024, 
+                 num_layers=8, dropout=0.1, activation='Swish', causal=False, mamba_config=None):
         super().__init__()
 
         self.cossm_encoder = CoSSM(num_layers,
@@ -375,25 +371,34 @@ class DepMamba(BaseNet):
 
         nn.init.xavier_uniform_(self.conv_audio.weight.data)
         nn.init.xavier_uniform_(self.conv_video.weight.data)
-        
 
     def feature_extractor(self, x, padding_mask=None, a_inference_params = None, v_inference_params = None):
-        xa = x[:, :, 136:]
-        xv = x[:, :, :136]
-        xa = self.conv_audio(xa.permute(0,2,1)).permute(0,2,1)
-        xv = self.conv_video(xv.permute(0,2,1)).permute(0,2,1)
+        xa = x[:, :, 136:] ## xa: torch.Size([8, ~3404, 25])
+        xv = x[:, :, :136] ## xv: torch.Size([8, ~3404, 136])
+        # print(f"xa: {xa.shape}")
+        # print(f"xv: {xv.shape}")
 
-        xa, xv = self.cossm_encoder(xa, xv, a_inference_params, v_inference_params)
+        xa = self.conv_audio(xa.permute(0,2,1)).permute(0,2,1) ## torch.Size([8, ~1570, 256])
+        xv = self.conv_video(xv.permute(0,2,1)).permute(0,2,1) ## torch.Size([8, ~1570, 256])
+        # print(f"xa: {xa.shape}")
+        # print(f"xv: {xv.shape}")
 
-        x = torch.cat([xa,xv],dim=-1)
-        x = self.enssm_encoder(x)
+        xa, xv = self.cossm_encoder(xa, xv, a_inference_params, v_inference_params) ## xa: torch.Size([8, 989, 256]), xv: torch.Size([8, 989, 256])
+        # print(f"xa: {xa.shape}")
+        # print(f"xv: {xv.shape}")
+
+        x = torch.cat([xa,xv],dim=-1) ## torch.Size([8, 1167, 512])
+        print(f"x cat: {x.shape}")
+        x = self.enssm_encoder(x) ## torch.Size([8, 1167, 512])
+        print(f"x enssm_encoder: {x.shape}")
         
         if padding_mask is not None:
             x = x * (padding_mask.unsqueeze(-1).float())
-            x = x.sum(dim=1) / (padding_mask.unsqueeze(-1).float()
-                                ).sum(dim=1, keepdim=False)  # Compute average
+            x = x.sum(dim=1) / (padding_mask.unsqueeze(-1).float()).sum(dim=1, keepdim=False)  # Compute average
+            print(f"x pool padding_mask: {x.shape}")
         else:
             x = self.pool(x.permute(0,2,1)).squeeze(-1)
+            print(f"x pool: {x.shape}")
         return x
 
     def classifier(self, x):
