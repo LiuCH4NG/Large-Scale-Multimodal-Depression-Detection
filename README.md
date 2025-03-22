@@ -37,17 +37,17 @@ Furthermore, you can run ``lmvd_extract_npy.py`` to obtain .npy features to trai
 #### Training
 
 ```bash
-$ python main.py --train True --train_gender both --test_gender both --epochs 120 --batch_size 16 --learning_rate 1e-4 --model DepMamba --dataset dvlog-dataset
+$ python main.py --train True --epochs 125 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --dataset dvlog-dataset
 
-$ python main.py --train True --train_gender both --test_gender both --epochs 120 --batch_size 16 --learning_rate 1e-4 --model DepMamba --dataset lmvd-dataset
+$ python main.py --train True --epochs 125 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --dataset lmvd-dataset
 ```
 
 #### Testing
 
 ```bash
-$ python main.py --train False --test_gender both --epochs 120 --batch_size 16 --learning_rate 1e-4 --model DepMamba --dataset dvlog-dataset
+$ python main.py --model MultiModalDepDet --dataset dvlog-dataset
 
-$ python main.py --train False --test_gender both --epochs 120 --batch_size 16 --learning_rate 1e-4 --model DepMamba --dataset lmvd-dataset
+$ python main.py --model MultiModalDepDet --dataset lmvd-dataset
 ```
 
 
