@@ -36,7 +36,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(2024)
+set_seed(2025)
 
 CONFIG_PATH = "../configs/config.yaml"
 
@@ -142,9 +142,9 @@ def main():
             net = DepMamba(**args.mmmamba)# mmmamba_lmvd mmmamba
     elif args.model == "MultiModalDepDet":
         if args.dataset=='lmvd-dataset':
-            net = MultiModalDepDet(**args.mmmamba_lmvd, fusion=args.fusion, num_heads=args.num_heads)
+            net = MultiModalDepDet(**args.lmvd, fusion=args.fusion, num_heads=args.num_heads)
         elif args.dataset=='dvlog-dataset':
-            net = MultiModalDepDet(**args.mmmamba, fusion=args.fusion, num_heads=args.num_heads)
+            net = MultiModalDepDet(**args.dvlog, fusion=args.fusion, num_heads=args.num_heads)
     else:
         raise NotImplementedError(f"The {args.model} method has not been implemented by this repo")
     
@@ -226,7 +226,7 @@ def main():
 
     early_stopping = EarlyStopping(patience = 5, 
                                     verbose = True, 
-                                    save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/early_stop_best_model.pt"
+                                    save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
                     )
     
     best_val_acc = -1.0
@@ -252,7 +252,8 @@ def main():
             )
             val_results = val(net, val_loader, loss_fn, args.device, args.tqdm_able)
 
-            val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
+            # val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
+            val_acc = val_results["acc"] 
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
 
@@ -291,6 +292,7 @@ def main():
         if not args.resume_path:
             print("not resume_path")
             best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
+            LOG_INFO(f"best_state_path: {best_state_path}")
             checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
             net.load_state_dict(
                 checkpoint['state_dict']
