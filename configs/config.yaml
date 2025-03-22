@@ -2,17 +2,35 @@ data_dir: "../data/"
 train_gender: both
 test_gender: both
 
-model: DepMamba
-dataset: dvlog-dataset #dvlog-dataset or lmvd-dataset
-train: true
+model: MultiModalDepDet # DepMamba #
+dataset: dvlog-dataset # dvlog-dataset or lmvd-dataset
+train: false
 epochs: 120
 batch_size: 16
 learning_rate: 8e-5
+optimizer: "Adam"
 lr_scheduler: cos
 if_wandb: false
 save_dir: "../weights"
 device:
   - "cuda"
+num_heads: 8
+fusion: 'lt'
+num_folds: 10
+
+#D-Vlog
+dvlog:
+  audio_input_size: 25 
+  video_input_size: 136
+  mm_input_size: 256
+  mm_output_sizes: [256]
+
+#LMVD
+lmvd:
+  audio_input_size: 128
+  video_input_size: 136
+  mm_input_size: 256
+  mm_output_sizes: [256]
 
 # Mamba parameters
 mmmamba:
