@@ -1,10 +1,7 @@
 import abc
-
 import torch.nn as nn
 
-
 class BaseNet(nn.Module, abc.ABC):
-
     def __init__(self):
         super().__init__()
 
@@ -21,9 +18,7 @@ class BaseNet(nn.Module, abc.ABC):
         x = self.classifier(x)
         return x
 
-
 class TMeanNet(BaseNet):
-
     def __init__(self, last_dim=161, hidden_sizes=[256, 128], dropout=0.5):
         super().__init__()
         self.fcs = nn.Sequential()
