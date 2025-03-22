@@ -12,7 +12,8 @@ logging.getLogger("speechbrain").setLevel(logging.WARNING)
 import os
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 import argparse
-import os
+import numpy as np
+import random
 import yaml
 import wandb
 import torch
@@ -20,7 +21,22 @@ from tqdm import tqdm
 import sys
 sys.path.append('../')
 from models import DepMamba
+from models import MultiModalDepDet
 from datasets_process import get_dvlog_dataloader, get_lmvd_dataloader
+from train_eval.utils import EarlyStopping, LOG_INFO, adjust_learning_rate
+from train_eval.train_val import train_epoch, val
+from train_eval.losses import CombinedLoss
+
+# Seed 
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(2024)
 
 CONFIG_PATH = "../configs/config.yaml"
 
@@ -31,7 +47,8 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Train and test a model."
     )
-    # arguments whose default values are in config.yaml
+
+    ## arguments whose default values are in config.yaml
     parser.add_argument("--data_dir", type=str)
     parser.add_argument("--train_gender", type=str)
     parser.add_argument("--test_gender", type=str)
@@ -41,235 +58,257 @@ def parse_args():
     parser.add_argument("-e", "--epochs", type=int)
     parser.add_argument("-bs", "--batch_size", type=int)
     parser.add_argument("-lr", "--learning_rate", type=float)
+    parser.add_argument('--optimizer', default='Adam', type=str, 
+                        help='Adam or AdamW or SGD or RMSProp')
+    parser.add_argument('--lr_scheduler', default='cos', type=str, 
+                        help='cos or StepLR or Plateau')
+    parser.add_argument('--amsgrad', default=0, type=int, 
+                        help='Adam amsgrad')
+    parser.add_argument('--momentum', default=0.9, type=float, help='Momentum')
+    parser.add_argument('--lr_steps', default=[100, 200, 300, 400, 550, 700], type=float, nargs="+", metavar='LRSteps',
+                        help='epochs to decay learning rate by 10')
+    parser.add_argument('--dampening', default=0.9, type=float, help='dampening of SGD')
+    parser.add_argument('--weight_decay', default=1e-3, type=float, help='Weight Decay')
+    parser.add_argument('--lr_patience', default=10, type=int,
+                        help='Patience of LR scheduler. See documentation of ReduceLROnPlateau.')
     parser.add_argument("-ds", "--dataset", type=str)
     parser.add_argument("-g", "--gpu", type=str)
     parser.add_argument("-wdb", "--if_wandb", type=bool)
     parser.add_argument("-tqdm", "--tqdm_able", type=bool)
-    parser.add_argument("-tr", "--train", type=bool)
+    parser.add_argument("-tr", "--train", type=bool, 
+                        help='Whether you want to training or not!')
     parser.add_argument("-d", "--device", type=str, nargs="*")
+    parser.add_argument('-n_h', '--num_heads', default=1, type=int, 
+                        help='number of heads, in the paper 1 or 4')
+    parser.add_argument('-fus', '--fusion', default='ia', type=str, 
+                        help='fusion type: lt | it | ia')
+    parser.add_argument('-folds', '--num_folds', default=5, type=int, 
+                        help='Number of Folds')
+    parser.add_argument('--begin_epoch', default=1, type=int,
+                        help='Training begins at this epoch. Previous trained model indicated by resume_path is loaded.')
+    parser.add_argument('--resume_path', default='', type=str, help='Save data (.pth) of previous training')
+    
     parser.set_defaults(**config)
     args = parser.parse_args()
 
-    # os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-
     return args
-
-
-def train_epoch(
-    net, train_loader, loss_fn, optimizer, device, 
-    current_epoch, total_epochs, tqdm_able
-):
-    """One training epoch.
-    """
-    net.train()
-    sample_count = 0
-    running_loss = 0.
-    correct_count = 0
-
-    with tqdm(
-        train_loader, desc=f"Training epoch {current_epoch}/{total_epochs}",
-        leave=False, unit="batch", disable=tqdm_able
-    ) as pbar:
-        for x, y, mask in pbar:
-            # print(x.shape,y.shape)
-            x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
-            y_pred = net(x, mask)
-            
-            loss = loss_fn(y_pred, y.to(torch.float32))
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-
-            sample_count += x.shape[0]
-            running_loss += loss.item() * x.shape[0]
-            # binary classification with only one output neuron
-            pred = (y_pred > 0.).int()
-            correct_count += (pred == y).sum().item()
-
-            pbar.set_postfix({
-                "loss": running_loss / sample_count,
-                "acc": correct_count / sample_count,
-            })
-
-    return {
-        "loss": running_loss / sample_count,
-        "acc": correct_count / sample_count,
-    }
-
-
-def val(
-    net, val_loader, loss_fn, device, tqdm_able
-):
-    """Test the model on the validation / test set.
-    """
-    net.eval()
-    sample_count = 0
-    running_loss = 0.
-    TP, FP, TN, FN = 0, 0, 0, 0
-
-    with torch.no_grad():
-        with tqdm(
-            val_loader, desc="Validating", leave=False, unit="batch", disable=tqdm_able
-        ) as pbar:
-            for x, y, mask in pbar:
-                # print(x.shape,y.shape)
-                x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
-                y_pred = net(x, mask)
-
-                loss = loss_fn(y_pred, y.to(torch.float32))
-
-                sample_count += x.shape[0]
-                running_loss += loss.item() * x.shape[0]
-                # binary classification with only one output neuron
-                pred = (y_pred > 0.).int()
-                TP += torch.sum((pred == 1) & (y == 1)).item()
-                FP += torch.sum((pred == 1) & (y == 0)).item()
-                TN += torch.sum((pred == 0) & (y == 0)).item()
-                FN += torch.sum((pred == 0) & (y == 1)).item()
-
-                l = running_loss / sample_count
-                precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-                recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-                f1_score = (
-                    2 * (precision * recall) / (precision + recall) 
-                    if (precision + recall) > 0 else 0.0
-                )
-                accuracy = (
-                    (TP + TN) / sample_count
-                    if sample_count > 0 else 0.0
-                )
-
-                pbar.set_postfix({
-                    "loss": l, "acc": accuracy,
-                    "precision": precision, "recall": recall, "f1": f1_score,
-                })
-
-    l = running_loss / sample_count
-    precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-    recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-    f1_score = (
-        2 * (precision * recall) / (precision + recall) 
-        if (precision + recall) > 0 else 0.0
-    )
-    accuracy = (
-        (TP + TN) / sample_count
-        if sample_count > 0 else 0.0
-    )
-    return {
-        "loss": l, "acc": accuracy,
-        "precision": precision, "recall": recall, "f1": f1_score,
-    }
 
 def main():
     args = parse_args()
-    args.data_dir = os.path.join(args.data_dir,args.dataset)
-    for i_iter in range(3):
-        if args.if_wandb:
-            wandb_run_name = f"{args.model}-{args.train_gender}-{args.test_gender}"
-            wandb.init(
-                project="mamnba_ad", config=args, name=wandb_run_name,
-            )
-            args = wandb.config
-        print(args)
-        
-        # Build Save Dir
-        os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{str(i_iter)}", exist_ok=True)
-        os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{str(i_iter)}/samples", exist_ok=True)
-        os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{str(i_iter)}/checkpoints", exist_ok=True)
+    args.data_dir = os.path.join(args.data_dir, args.dataset)
 
-        # construct the model
-        if args.model == "DepMamba":
-            if args.dataset=='lmvd-dataset':
-                net = DepMamba(**args.mmmamba_lmvd)# mmmamba_lmvd mmmamba
-            elif args.dataset=='dvlog-dataset':
-                net = DepMamba(**args.mmmamba)# mmmamba_lmvd mmmamba
-        else:#if args.model == "MAMBA":
-            raise NotImplementedError(f"The {args.model} method has not been implemented by this repo")
-        
-        if args.device[0] != 'cpu':
-            args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f'Final choice of computing device: {args.device}')
-        net = net.to(args.device)
-        if len(args.device) > 1:
-            # net = torch.nn.DataParallel(net, device_ids=args.device)
-            net = torch.nn.DataParallel(net, device_ids=None)
-
-            pytorch_total_params = sum(p.numel() for p in net.parameters() if
-                                   p.requires_grad)
-            print("Total number of trainable parameters: ", pytorch_total_params)
-            pytorch_total_params_ = sum(p.numel() for p in net.parameters())
-            print("Total number of parameters: ", pytorch_total_params_)
-
-        # prepare the data
-        if args.dataset=='dvlog-dataset':
-            train_loader = get_dvlog_dataloader(
+    # prepare the data
+    if args.dataset=='dvlog-dataset':
+        # Initialize K-Fold cross-validation
+        train_loader = get_dvlog_dataloader(
                 args.data_dir, "train", args.batch_size, args.train_gender
             )
-            val_loader = get_dvlog_dataloader(
+        val_loader = get_dvlog_dataloader(
                 args.data_dir, "valid", args.batch_size, args.test_gender
             )
-            test_loader = get_dvlog_dataloader(
-                args.data_dir, "test", args.batch_size, args.test_gender
-            )
-        elif args.dataset=='lmvd-dataset':
-            train_loader = get_lmvd_dataloader(
-                args.data_dir, "train", args.batch_size, args.train_gender
-            )
-            val_loader = get_lmvd_dataloader(
-                args.data_dir, "valid", args.batch_size, args.test_gender
-            )
-            test_loader = get_lmvd_dataloader(
+        test_loader = get_dvlog_dataloader(
                 args.data_dir, "test", args.batch_size, args.test_gender
             )
 
-        # set other training components
-        loss_fn = torch.nn.BCEWithLogitsLoss()
-        optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
+    elif args.dataset=='lmvd-dataset':
+        train_loader = get_lmvd_dataloader(
+            args.data_dir, "train", args.batch_size, args.train_gender
+        )
+        val_loader = get_lmvd_dataloader(
+            args.data_dir, "valid", args.batch_size, args.test_gender
+        )
+        test_loader = get_lmvd_dataloader(
+            args.data_dir, "test", args.batch_size, args.test_gender
+        )
 
-        best_val_acc = -1.0
-        best_test_acc = -1.0
-        if args.train:
-            for epoch in range(args.epochs):
-                train_results = train_epoch(
-                    net, train_loader, loss_fn, optimizer, 
-                    args.device, epoch, args.epochs, args.tqdm_able
-                )
-                val_results = val(net, val_loader, loss_fn, args.device,args.tqdm_able)
+    if args.if_wandb:
+        wandb_run_name = f"{args.model}-{args.train_gender}-{args.test_gender}"
+        wandb.init(
+            project="Multi-Modal Depression Model", config=args, name=wandb_run_name,
+        )
+        args = wandb.config
+    print(args)
+    
+    # Build Save Dir
+    os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}", exist_ok=True)
+    os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/samples", exist_ok=True)
+    os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints", exist_ok=True)
 
-                val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    torch.save(net.state_dict(),f"{args.save_dir}/{args.dataset}_{args.model}_{str(i_iter)}/checkpoints/best_model.pt")
+    # construct the model
+    if args.model == "DepMamba":
+        if args.dataset=='lmvd-dataset':
+            net = DepMamba(**args.mmmamba_lmvd)# mmmamba_lmvd mmmamba
+        elif args.dataset=='dvlog-dataset':
+            net = DepMamba(**args.mmmamba)# mmmamba_lmvd mmmamba
+    elif args.model == "MultiModalDepDet":
+        if args.dataset=='lmvd-dataset':
+            net = MultiModalDepDet(**args.mmmamba_lmvd, fusion=args.fusion, num_heads=args.num_heads)
+        elif args.dataset=='dvlog-dataset':
+            net = MultiModalDepDet(**args.mmmamba, fusion=args.fusion, num_heads=args.num_heads)
+    else:
+        raise NotImplementedError(f"The {args.model} method has not been implemented by this repo")
+    
+    ## model check
+    if args.device[0] != 'cpu':
+        args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f'Final choice of computing device: {args.device}')
+    net = net.to(args.device)
+    if len(args.device) > 1:
+        # net = torch.nn.DataParallel(net, device_ids=args.device)
+        net = torch.nn.DataParallel(net, device_ids=None)
 
-                if args.if_wandb:
-                    wandb.log({
-                        "loss/train": train_results["loss"],
-                        "acc/train": train_results["acc"],
-                        "loss/val": val_results["loss"],
-                        "acc/val": val_results["acc"],
-                        "precision/val": val_results["precision"],
-                        "recall/val": val_results["recall"],
-                        "f1/val": val_results["f1"]
-                    })
-            
-        # upload the best model to wandb website
-        # load the best model for testing
-        with torch.no_grad():
+        pytorch_total_params = sum(p.numel() for p in net.parameters() if
+                                p.requires_grad)
+        print("Total number of trainable parameters: ", pytorch_total_params)
+        pytorch_total_params_ = sum(p.numel() for p in net.parameters())
+        print("Total number of parameters: ", pytorch_total_params_)
+
+
+    # set other training components
+    # loss_fn = torch.nn.BCEWithLogitsLoss()
+    loss_fn = CombinedLoss(lambda_reg=1e-5, 
+                            focal_weight=0.5, 
+                            l2_weight=0.5
+                        )
+
+    # optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
+    # Setting the optimizer for model training
+    assert args.optimizer in ["RMSprop", "SGD", "Adam", "AdamW"]
+    if args.optimizer=="SGD":
+        optimizer = torch.optim.SGD(
+            filter(lambda p: p.requires_grad, net.parameters()),     # Parameters passed into the model
+            lr=args.learning_rate,                                   # Learning rate
+            momentum=args.momentum,                                  # Momentum factor (optional)
+            dampening=args.dampening,
+            weight_decay=args.weight_decay,                          # Weight decay (L2 regularization)
+            nesterov=False)
+    elif args.optimizer=="Adam":
+        optimizer = torch.optim.Adam(
+            filter(lambda p: p.requires_grad, net.parameters()),  
+            lr=args.learning_rate,  
+            betas=(0.9,0.999), 
+            weight_decay=args.weight_decay,  
+            amsgrad=args.amsgrad
+        )
+    elif args.optimizer == "AdamW":
+        optimizer = torch.optim.AdamW(
+            filter(lambda p: p.requires_grad, net.parameters()),  
+            lr=args.learning_rate, 
+            betas=(0.9, 0.999),  
+            weight_decay=args.weight_decay,  
+            amsgrad=args.amsgrad  
+        )
+    elif args.optimizer == "RMSprop":
+        optimizer = torch.optim.RMSprop(
+            filter(lambda p: p.requires_grad, net.parameters()),  
+            lr=args.learning_rate, 
+            alpha=0.99,  
+            eps=1e-8,  
+            weight_decay=args.weight_decay,  
+            momentum=0.9,  
+        )
+    
+    ## learning scheluder
+    if args.lr_scheduler == "cos":
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs // 5, eta_min=args.learning_rate / 20
+        )
+    elif args.lr_scheduler == "StepLR":
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=3, gamma=0.00001
+        )
+    elif args.lr_scheduler == "Plateau":
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 'min', patience=args.lr_patience
+        )
+    else:
+        lr_scheduler = None
+
+    early_stopping = EarlyStopping(patience = 5, 
+                                    verbose = True, 
+                                    save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/early_stop_best_model.pt"
+                    )
+    
+    best_val_acc = -1.0
+    best_test_acc = -1.0
+
+    if args.resume_path:
+        print('loading checkpoint {}'.format(args.resume_path))
+        checkpoint = torch.load(args.resume_path, weights_only=False)
+        assert args.model == checkpoint['arch']
+        best_val_acc = checkpoint['best_val_acc']
+        print("Loaded Model Best Val Acc: {best_val_acc}")
+        args.begin_epoch = checkpoint['epoch']
+        net.load_state_dict(checkpoint['state_dict'])
+
+    print(f"Training: {args.train}")
+    if args.train:
+        for epoch in range(args.begin_epoch, args.epochs+1):
+            adjust_learning_rate(optimizer, epoch, args)
+
+            train_results = train_epoch(
+                net, train_loader, loss_fn, optimizer, lr_scheduler,
+                args.device, epoch, args.epochs, args.tqdm_able
+            )
+            val_results = val(net, val_loader, loss_fn, args.device, args.tqdm_able)
+
+            val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+
+                state = {
+                    'epoch': epoch,
+                    'arch': args.model,
+                    'state_dict': net.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'best_val_acc': best_val_acc,
+                    'model': net
+                }
+                save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
+                torch.save(state, save_path)
+                LOG_INFO(f"[{args.model}_{args.fusion}]: Model saved at epoch {state['epoch']}: {save_path}  | best_val_acc: {best_val_acc}", 'green')
+
+            if early_stopping.early_stop: ## Early stop when it found increase loss or satuated
+                LOG_INFO("Early stopping triggered", 'red')
+                break
+
+            if args.if_wandb:
+                wandb.log({
+                    "loss/train": train_results["loss"],
+                    "acc/train": train_results["acc"],
+                    "loss/val": val_results["loss"],
+                    "acc/val": val_results["acc"],
+                    "precision/val": val_results["precision"],
+                    "recall/val": val_results["recall"],
+                    "f1/val": val_results["f1"]
+                })
+        
+    print(f"resume_path: {args.resume_path}")
+
+    # upload the best model to wandb website
+    # load the best model for testing
+    with torch.no_grad():
+        if not args.resume_path:
+            print("not resume_path")
+            best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
+            checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
             net.load_state_dict(
-                torch.load(f"{args.save_dir}/{args.dataset}_{args.model}_{str(i_iter)}/checkpoints/best_model.pt", map_location=args.device)
+                checkpoint['state_dict']
             )
-            net.eval()
-            test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able)
-            print("Test results:")
-            print(test_results)
 
-            with open(f'../results/{args.dataset}_{args.model}_{str(i_iter)}.txt','w') as f:    
-                test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]}, Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0}'
-                f.write(test_result_str)         
+        net.eval()
+        test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able)
+        print("Test results:")
+        print(test_results)
+
+        with open(f'../results/{args.dataset}_{args.model}_{args.fusion}.txt','w') as f:    
+            test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]}, Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0}'
+            f.write(test_result_str)         
 
     if args.if_wandb:
         artifact = wandb.Artifact("best_model", type="model")
-        artifact.add_file(f"{args.save_dir}/{args.model}/checkpoints/best_model.pt")
+        artifact.add_file(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt")
+
         wandb.run.summary["acc/best_val_acc"] = best_val_acc
         wandb.log_artifact(artifact)
         wandb.run.summary["acc/test_acc"] = test_results["acc"]
@@ -279,7 +318,6 @@ def main():
         wandb.run.summary["f1/test_f1"] = test_results["f1"]
 
         wandb.finish()
-
 
 if __name__ == '__main__':
     main()
