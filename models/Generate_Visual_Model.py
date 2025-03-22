@@ -1,7 +1,9 @@
 '''
 -*- coding: utf-8 -*-
 @Author     :   Md Rezwanul Haque
+@Source     :   https://github.com/katerynaCh/MMA-DFER/blob/main/AudioMAE/audio_models_vit.py
 @Adapted    :   https://github.com/katerynaCh/MMA-DFER/blob/main/models/Generate_Model.py
+            :   https://github.com/katerynaCh/MMA-DFER/blob/main/AudioMAE/audio_models_vit.py
 @Paper      :   https://arxiv.org/abs/2404.09010
 @Description:   This is for Visual Feature Extraction!
 '''
