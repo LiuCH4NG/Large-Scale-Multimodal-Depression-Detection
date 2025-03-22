@@ -20,13 +20,12 @@ import torch
 from tqdm import tqdm
 from torch.utils.data import ConcatDataset, Subset, DataLoader
 from sklearn.model_selection import KFold
-from sklearn.model_selection import train_test_split
 import sys
 sys.path.append('../')
 from models import DepMamba
 from models import MultiModalDepDet
-from datasets_process import get_dvlog_dataloader, get_lmvd_dataloader
-from train_eval.utils import LOG_INFO, collate_fn, EarlyStopping, adjust_learning_rate
+from datasets_process import get_dvlog_dataloader, get_lmvd_dataloader, _collate_fn
+from train_eval.utils import LOG_INFO, EarlyStopping, adjust_learning_rate
 from train_eval.train_val import train_epoch, val
 from train_eval.losses import CombinedLoss
 
@@ -39,7 +38,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(2024)
+set_seed(2025)
 
 CONFIG_PATH = "../configs/config.yaml"
 
@@ -156,20 +155,20 @@ def main():
         train_subset = Subset(combined_dataset, train_indices.tolist())
         val_subset = Subset(combined_dataset, val_indices.tolist())
 
-        train_loader_fold = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-        val_loader_fold = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+        train_loader_fold = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, collate_fn=_collate_fn)
+        val_loader_fold = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, collate_fn=_collate_fn)
 
         # construct the model
         if args.model == "DepMamba":
             if args.dataset=='lmvd-dataset':
-                net = DepMamba(**args.mmmamba_lmvd)# mmmamba_lmvd mmmamba
+                net = DepMamba(**args.mmmamba_lmvd) # mmmamba_lmvd mmmamba
             elif args.dataset=='dvlog-dataset':
-                net = DepMamba(**args.mmmamba)# mmmamba_lmvd mmmamba
+                net = DepMamba(**args.mmmamba) # mmmamba_d-vlog mmmamba
         elif args.model == "MultiModalDepDet":
             if args.dataset=='lmvd-dataset':
-                net = MultiModalDepDet(**args.mmmamba_lmvd, fusion=args.fusion, num_heads=args.num_heads)
+                net = MultiModalDepDet(**args.lmvd, fusion=args.fusion, num_heads=args.num_heads)
             elif args.dataset=='dvlog-dataset':
-                net = MultiModalDepDet(**args.mmmamba, fusion=args.fusion, num_heads=args.num_heads)
+                net = MultiModalDepDet(**args.dvlog, fusion=args.fusion, num_heads=args.num_heads)
         else:
             raise NotImplementedError(f"The {args.model} method has not been implemented by this repo")
         
@@ -250,7 +249,7 @@ def main():
 
         early_stopping = EarlyStopping(patience = 5, 
                                        verbose = True, 
-                                       save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/early_stop_best_model.pt"
+                                       save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
                         )
         
         best_val_acc = -1.0
@@ -275,7 +274,8 @@ def main():
                 )
                 val_results = val(net, val_loader_fold, loss_fn, args.device, args.tqdm_able)
 
-                val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
+                # val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
+                val_acc = val_results["acc"] 
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
 
@@ -289,7 +289,7 @@ def main():
                     }
                     save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
                     torch.save(state, save_path)
-                    LOG_INFO(f"[{args.model}_{args.fusion}]: Model saved at epoch {state['epoch']}: {save_path}  || val acc: {best_val_acc}", 'green')
+                    LOG_INFO(f"[{args.model}_{args.fusion}]: Model saved at epoch {state['epoch']}: {save_path}  | val acc: {best_val_acc}", 'green')
 
                 if early_stopping.early_stop: ## Early stop when it found increase loss or satuated
                     LOG_INFO("Early stopping triggered", 'red')
@@ -313,7 +313,8 @@ def main():
         with torch.no_grad():
             if not args.resume_path:
                 print("not resume_path")
-                best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
+                best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
+                LOG_INFO(f"best_state_path: {best_state_path}")
                 checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
                 net.load_state_dict(
                     checkpoint['state_dict']
@@ -321,7 +322,7 @@ def main():
             net.eval()
             # test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able)
             test_results = val(net, val_loader_fold, loss_fn, args.device,args.tqdm_able)
-            print("Test results:")
+            LOG_INFO("Test results:")
             print(test_results)
 
             with open(f'../results/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}.txt','w') as f:    
