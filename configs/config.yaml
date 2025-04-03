@@ -14,6 +14,8 @@ if_wandb: false
 save_dir: "../weights"
 device:
   - "cuda"
+
+# device: ["cuda:1"]  # For two GPUs -- > device: ["cuda:0", "cuda:1"]  # For two GPUs
 num_heads: 8
 fusion: 'lt'
 num_folds: 10
@@ -23,14 +25,14 @@ dvlog:
   audio_input_size: 25 
   video_input_size: 136
   mm_input_size: 256
-  mm_output_sizes: [256]
+  mm_output_sizes: [256, 64, 768]
 
 #LMVD
 lmvd:
   audio_input_size: 128
   video_input_size: 136
   mm_input_size: 256
-  mm_output_sizes: [256]
+  mm_output_sizes: [256, 64, 768]
 
 # Mamba parameters
 mmmamba:
