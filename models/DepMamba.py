@@ -388,17 +388,17 @@ class DepMamba(BaseNet):
         # print(f"xv: {xv.shape}")
 
         x = torch.cat([xa,xv],dim=-1) ## torch.Size([8, 1167, 512])
-        print(f"x cat: {x.shape}")
+        # print(f"x cat: {x.shape}")
         x = self.enssm_encoder(x) ## torch.Size([8, 1167, 512])
-        print(f"x enssm_encoder: {x.shape}")
+        # print(f"x enssm_encoder: {x.shape}")
         
         if padding_mask is not None:
             x = x * (padding_mask.unsqueeze(-1).float())
             x = x.sum(dim=1) / (padding_mask.unsqueeze(-1).float()).sum(dim=1, keepdim=False)  # Compute average
-            print(f"x pool padding_mask: {x.shape}")
+            # print(f"x pool padding_mask: {x.shape}")
         else:
             x = self.pool(x.permute(0,2,1)).squeeze(-1)
-            print(f"x pool: {x.shape}")
+            # print(f"x pool: {x.shape}")
         return x
 
     def classifier(self, x):
