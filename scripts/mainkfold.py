@@ -79,8 +79,8 @@ def parse_args():
     parser.add_argument("-d", "--device", type=str, nargs="*")
     parser.add_argument('-n_h', '--num_heads', default=1, type=int, 
                         help='number of heads, in the paper 1 or 4')
-    parser.add_argument('-fus', '--fusion', default='ia', type=str, 
-                        help='fusion type: lt | it | ia')
+    parser.add_argument('-fus', '--fusion', default='lt', type=str, 
+                        help='fusion type: lt | it | ia | no_fusion')
     parser.add_argument('-folds', '--num_folds', default=5, type=int, 
                         help='Number of Folds')
     parser.add_argument('--begin_epoch', default=1, type=int,
