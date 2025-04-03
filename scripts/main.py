@@ -81,7 +81,7 @@ def parse_args():
     parser.add_argument('-n_h', '--num_heads', default=1, type=int, 
                         help='number of heads, in the paper 1 or 4')
     parser.add_argument('-fus', '--fusion', default='ia', type=str, 
-                        help='fusion type: lt | it | ia')
+                        help='fusion type: lt | it | ia | MT')
     parser.add_argument('-folds', '--num_folds', default=5, type=int, 
                         help='Number of Folds')
     parser.add_argument('--begin_epoch', default=1, type=int,
@@ -99,7 +99,6 @@ def main():
 
     # prepare the data
     if args.dataset=='dvlog-dataset':
-        # Initialize K-Fold cross-validation
         train_loader = get_dvlog_dataloader(
                 args.data_dir, "train", args.batch_size, args.train_gender
             )
@@ -148,7 +147,7 @@ def main():
     else:
         raise NotImplementedError(f"The {args.model} method has not been implemented by this repo")
     
-    ## model check
+    ### model check
     if args.device[0] != 'cpu':
         args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'Final choice of computing device: {args.device}')
@@ -163,15 +162,48 @@ def main():
         pytorch_total_params_ = sum(p.numel() for p in net.parameters())
         print("Total number of parameters: ", pytorch_total_params_)
 
+    ###-------------------------------------------------------------------------
+    # # Replace the original device handling code with the following:
+    # # Process device selection
+    # if args.device[0].startswith('cuda'):
+    #     if not torch.cuda.is_available():
+    #         print("CUDA is not available, switching to CPU.")
+    #         args.device = ['cpu']
+    #     else:
+    #         # Extract GPU indices from device list
+    #         available_gpus = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
+    #         valid_devices = [d for d in args.device if d in available_gpus]
+            
+    #         if not valid_devices:
+    #             print(f"No valid CUDA devices in {args.device}. Available: {available_gpus}. Switching to CPU.")
+    #             args.device = ['cpu']
+    #         else:
+    #             args.device = valid_devices
+    # else:
+    #     args.device = ['cpu']
+
+    # print(f"Using devices: {args.device}")
+
+    # # Move model to appropriate device(s)
+    # if len(args.device) > 1 and all(d.startswith('cuda') for d in args.device):
+    #     device_ids = [int(d.split(':')[1]) for d in args.device]
+    #     print(f"Using DataParallel with GPU devices: {device_ids}")
+    #     net = torch.nn.DataParallel(net, device_ids=device_ids)
+    #     # DataParallel will automatically use the first device in device_ids
+    #     net = net.to(f'cuda:{device_ids[0]}')
+    # else:
+    #     device = args.device[0]
+    #     print(f"Using single device: {device}")
+    #     net = net.to(device)
+
+    ###-------------------------------------------------------------------------
 
     # set other training components
-    # loss_fn = torch.nn.BCEWithLogitsLoss()
     loss_fn = CombinedLoss(lambda_reg=1e-5, 
                             focal_weight=0.5, 
                             l2_weight=0.5
                         )
-
-    # optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
+    
     # Setting the optimizer for model training
     assert args.optimizer in ["RMSprop", "SGD", "Adam", "AdamW"]
     if args.optimizer=="SGD":
@@ -237,7 +269,7 @@ def main():
         checkpoint = torch.load(args.resume_path, weights_only=False)
         assert args.model == checkpoint['arch']
         best_val_acc = checkpoint['best_val_acc']
-        print("Loaded Model Best Val Acc: {best_val_acc}")
+        print(f"Loaded Model Best Val Acc: {best_val_acc}")
         args.begin_epoch = checkpoint['epoch']
         net.load_state_dict(checkpoint['state_dict'])
 
