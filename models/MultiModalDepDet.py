@@ -4,15 +4,17 @@
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .base import BaseNet
 from .Generate_Audio_Model import AudioTransformerModel
 from .Generate_Visual_Model import GenerateVisualModel
 from .transformer_timm import AttentionBlock, Attention
+from .mutualtransformer import MutualTransformer
 
 class MultiModalDepDet(BaseNet):
 
     def __init__(self, audio_input_size=161, video_input_size=161, mm_input_size=128, 
-                 mm_output_sizes=[256,64], 
+                 mm_output_sizes=[256, 64, 1536], 
                  fusion='ia', num_heads=4):
         super().__init__()
 
@@ -23,6 +25,17 @@ class MultiModalDepDet(BaseNet):
                                                     label_dim=2, audioset_pretrain=True)
         
         self.visual_model = GenerateVisualModel(temporal_layers=6, number_class=2)
+
+        # Initialize mutual transformer for crossing and fusing: video & audio
+        self.mutualtransformer = MutualTransformer(a_d=145, v_d=128)
+
+        # Encoder for fused audio-visual features
+        self.av_encoder = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(
+                d_model=3*256, nhead=8, dim_feedforward=6*256, batch_first=True
+            ),
+            num_layers=6,
+        )
 
         ## audio conv
         self.conv1d_block_audio  = self.conv1d_block(in_channels=768, out_channels=512)
@@ -38,7 +51,11 @@ class MultiModalDepDet(BaseNet):
         
         self.pool = nn.AdaptiveMaxPool1d(1)
 
-        self.output = nn.Linear(mm_output_sizes[-1], 1) ## DepMamba = 2, MultiModalDepDet = 1
+        if fusion == "MT":
+            self.output = nn.Linear(mm_output_sizes[2], 1) ## DepMamba = 2, MultiModalDepDet = 1, MT = 1536/256=6
+        else:
+            self.output = nn.Linear(mm_output_sizes[-1], 1) ## DepMamba = 2, MultiModalDepDet = 1, MT = 1536/256=6
+
         self.m = nn.Sigmoid()
 
         nn.init.xavier_uniform_(self.conv_audio.weight.data)
@@ -213,6 +230,29 @@ class MultiModalDepDet(BaseNet):
 
         elif self.fusion == 'ia':
             h_av, h_va = self.intermediate_attention_fusion(xa, xv)
+
+        elif self.fusion == 'MT':
+            mutual_fused_feats = self.mutualtransformer(xa, xv) # torch.Size([8, 512, 768])
+
+            #1
+            # pooled_adaptive_avg = F.adaptive_avg_pool1d(mutual_fused_feats.transpose(1, 2), 1).squeeze(-1)
+            # pooled_adaptive_max = F.adaptive_max_pool1d(mutual_fused_feats.transpose(1, 2), 1).squeeze(-1)
+            # pooled_features = torch.cat([pooled_adaptive_avg, pooled_adaptive_max], dim=1) # concatenate along the feature dimension. #torch.Size([8, 1536])
+            # z = pooled_features
+            
+
+            #2
+            # ## Encoder for fused audio-visual features
+            # xav_fused = self.av_encoder(mutual_fused_feats)
+            # z = torch.mean(xav_fused, dim=1)
+           
+            # #3
+            # mean accross temporal dimension
+            z = torch.mean(mutual_fused_feats, dim=1)
+
+            z = self.fusion_dropout(z)
+            return z
+
         ##-------------------------------------------------------------------
 
         audio_pooled = h_av.mean([1]) # torch.Size([8, 128]) # mean accross temporal dimension
