@@ -15,3 +15,14 @@ python mainkfold.py --train True --num_folds 10 --epochs 125 --batch_size 16 --l
 python main.py --train True --epochs 225 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --fusion lt --dataset dvlog-dataset
 
 python main.py --train True --epochs 225 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --fusion lt --dataset lmvd-dataset
+
+
+python mainkfold.py --train True --num_folds 10 --epochs 125 --batch_size 16 --learning_rate 1e-4 --model DepMamba --fusion no_fusion --dataset dvlog-dataset
+
+python mainkfold.py --train True --num_folds 10 --epochs 125 --batch_size 16 --learning_rate 1e-4 --model DepMamba --fusion no_fusion --dataset lmvd-dataset
+
+
+# Mutual Transformer
+python main.py --train True --epochs 225 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --fusion MT --dataset dvlog-dataset
+
+python main.py --train True --epochs 225 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --fusion MT --dataset lmvd-dataset
