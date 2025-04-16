@@ -9,7 +9,7 @@ epochs: 120
 batch_size: 16
 learning_rate: 8e-5
 optimizer: "Adam"
-lr_scheduler: cos
+lr_scheduler: cos #other #
 if_wandb: false
 save_dir: "../weights"
 device:
@@ -25,14 +25,14 @@ dvlog:
   audio_input_size: 25 
   video_input_size: 136
   mm_input_size: 256
-  mm_output_sizes: [256, 64, 768]
+  mm_output_sizes: [128, 129, 256, 273, 768]
 
 #LMVD
 lmvd:
   audio_input_size: 128
   video_input_size: 136
   mm_input_size: 256
-  mm_output_sizes: [256, 64, 768]
+  mm_output_sizes: [128, 129, 256, 273, 768]
 
 # Mamba parameters
 mmmamba:
