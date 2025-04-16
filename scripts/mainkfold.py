@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument('--amsgrad', default=0, type=int, 
                         help='Adam amsgrad')
     parser.add_argument('--momentum', default=0.9, type=float, help='Momentum')
-    parser.add_argument('--lr_steps', default=[100, 200, 300, 400, 550, 700], type=float, nargs="+", metavar='LRSteps',
+    parser.add_argument('--lr_steps', default=[200, 300, 400, 550, 700], type=float, nargs="+", metavar='LRSteps',
                         help='epochs to decay learning rate by 10')
     parser.add_argument('--dampening', default=0.9, type=float, help='dampening of SGD')
     parser.add_argument('--weight_decay', default=1e-3, type=float, help='Weight Decay')
@@ -83,6 +83,8 @@ def parse_args():
                         help='fusion type: lt | it | ia | no_fusion')
     parser.add_argument('-folds', '--num_folds', default=5, type=int, 
                         help='Number of Folds')
+    parser.add_argument('--start_fold', default=0, type=int, 
+                       help='Fold number to start from (0-based index)')
     parser.add_argument('--begin_epoch', default=1, type=int,
                         help='Training begins at this epoch. Previous trained model indicated by resume_path is loaded.')
     parser.add_argument('--resume_path', default='', type=str, help='Save data (.pth) of previous training')
@@ -136,6 +138,10 @@ def main():
     all_indices = np.arange(len(combined_dataset))
 
     for fold, (train_indices, val_indices) in enumerate(kf.split(all_indices)):
+        if fold < args.start_fold:
+            LOG_INFO(f"Skipping Fold {fold+1}/{args.num_folds}")
+            continue
+
         LOG_INFO(f"Fold {fold+1}/{args.num_folds}")
 
         if args.if_wandb:
@@ -144,7 +150,7 @@ def main():
                 project="Multi-Modal Depression Model", config=args, name=wandb_run_name,
             )
             args = wandb.config
-        print(args)
+        # print(args)
         
         # Build Save Dir
         os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}", exist_ok=True)
@@ -175,7 +181,7 @@ def main():
         ## model check
         if args.device[0] != 'cpu':
             args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f'Final choice of computing device: {args.device}')
+        # print(f'Final choice of computing device: {args.device}')
         net = net.to(args.device)
         if len(args.device) > 1:
             # net = torch.nn.DataParallel(net, device_ids=args.device)
@@ -183,9 +189,9 @@ def main():
 
             pytorch_total_params = sum(p.numel() for p in net.parameters() if
                                    p.requires_grad)
-            print("Total number of trainable parameters: ", pytorch_total_params)
-            pytorch_total_params_ = sum(p.numel() for p in net.parameters())
-            print("Total number of parameters: ", pytorch_total_params_)
+            # print("Total number of trainable parameters: ", pytorch_total_params)
+            # pytorch_total_params_ = sum(p.numel() for p in net.parameters())
+            # print("Total number of parameters: ", pytorch_total_params_)
 
         # set other training components
         # loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -255,14 +261,31 @@ def main():
         best_val_acc = -1.0
         best_test_acc = -1.0
 
-        if args.resume_path:
+        # Check for fold-specific best model
+        fold_best_model_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
+        if os.path.exists(fold_best_model_path) and not args.resume_path:  # Only check fold-specific if no resume_path
+            print(f"Resuming from fold-specific checkpoint: {fold_best_model_path}")
+            checkpoint = torch.load(fold_best_model_path, map_location=args.device, weights_only=False)
+            # checkpoint = torch.load(fold_best_model_path, weights_only=False)
+            assert args.model == checkpoint['arch']
+            best_val_acc = checkpoint['best_val_acc']
+            print(f"Loaded Model Best Val Acc: {best_val_acc}")
+            args.begin_epoch = checkpoint['epoch'] + 1  # Start from next epoch
+            print(f"Ended Epoch: {checkpoint['epoch']} and Begining Epoch: {args.begin_epoch}")
+            net.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        elif args.resume_path:
             print('loading checkpoint {}'.format(args.resume_path))
             checkpoint = torch.load(args.resume_path, weights_only=False)
             assert args.model == checkpoint['arch']
             best_val_acc = checkpoint['best_val_acc']
             print("Loaded Model Best Val Acc: {best_val_acc}")
-            args.begin_epoch = checkpoint['epoch']
+            args.begin_epoch = checkpoint['epoch'] + 1
+            print(f"Ended Epoch: {checkpoint['epoch']} and Begining Epoch: {args.begin_epoch}")
             net.load_state_dict(checkpoint['state_dict'])
+        else:
+            args.begin_epoch = 1
+            best_val_acc = -1.0
 
         if args.train:
             for epoch in range(args.begin_epoch, args.epochs+1):
@@ -272,7 +295,7 @@ def main():
                     net, train_loader_fold, loss_fn, optimizer, lr_scheduler,
                     args.device, epoch, args.epochs, args.tqdm_able
                 )
-                val_results = val(net, val_loader_fold, loss_fn, args.device, args.tqdm_able)
+                val_results = val(net, val_loader_fold, loss_fn, args.device, args.tqdm_able, msg='additional metrics')
 
                 # val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
                 val_acc = val_results["acc"] 
@@ -311,7 +334,7 @@ def main():
         # upload the best model to wandb website
         # load the best model for testing
         with torch.no_grad():
-            if not args.resume_path:
+            if not args.resume_path or not os.path.exists(args.resume_path):
                 print("not resume_path")
                 best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
                 LOG_INFO(f"best_state_path: {best_state_path}")
@@ -321,12 +344,35 @@ def main():
                 )
             net.eval()
             # test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able)
-            test_results = val(net, val_loader_fold, loss_fn, args.device,args.tqdm_able)
-            LOG_INFO("Test results:")
-            print(test_results)
+            test_results = val(net, val_loader_fold, loss_fn, args.device,args.tqdm_able, msg='additional metrics')
+            LOG_INFO(f"[{args.dataset}_{args.model}_{args.fusion}] Test results:")
+            LOG_INFO(f"Test Result: {test_results}", "magenta")
+            color_map = {
+                "loss": "red",
+                "acc": "cyan",
+                "precision": "magenta",
+                "recall": "yellow",
+                "f1": "green",
+                "weighted_accuracy": "blue",
+                "unweighted_accuracy": "light_blue",
+                "weighted_precision": "light_magenta",
+                "unweighted_precision": "light_yellow",
+                "weighted_recall": "light_cyan",
+                "unweighted_recall": "light_green",
+                "weighted_f1": "white",
+                "unweighted_f1": "light_grey",
+            }
+            for key, value in test_results.items():
+                color = color_map.get(key, 'blue')  # Default to blue if key not found
+                LOG_INFO(f"{key}: {value:.4f}", color) # Format float values
 
             with open(f'../results/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}.txt','w') as f:    
-                test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]}, Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0}'
+                test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]},\
+                      Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0},\
+                        WA:{test_results["weighted_accuracy"]}, UA:{test_results["unweighted_accuracy"]},\
+                              WP:{test_results["weighted_precision"]}, UP:{test_results["unweighted_precision"]},\
+                                WR:{test_results["weighted_recall"]}, UR:{test_results["unweighted_recall"]},\
+                                    WF:{test_results["weighted_f1"]}, UF:{test_results["unweighted_f1"]}'
                 f.write(test_result_str)         
 
     if args.if_wandb:
