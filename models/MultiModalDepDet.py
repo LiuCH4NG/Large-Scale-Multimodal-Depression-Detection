@@ -14,9 +14,11 @@ from .mutualtransformer import MutualTransformer
 class MultiModalDepDet(BaseNet):
 
     def __init__(self, audio_input_size=161, video_input_size=161, mm_input_size=128, 
-                 mm_output_sizes=[256, 64, 1536], 
+                 mm_output_sizes=[128, 256, 768], 
                  fusion='ia', num_heads=4):
         super().__init__()
+
+        self.fusion  =   fusion
 
         self.conv_audio = nn.Conv1d(audio_input_size, mm_input_size, 1, padding=0, dilation=1, bias=False)
         self.conv_video = nn.Conv1d(video_input_size, mm_input_size, 1, padding=0, dilation=1, bias=False)
@@ -51,10 +53,17 @@ class MultiModalDepDet(BaseNet):
         
         self.pool = nn.AdaptiveMaxPool1d(1)
 
-        if fusion == "MT":
-            self.output = nn.Linear(mm_output_sizes[2], 1) ## DepMamba = 2, MultiModalDepDet = 1, MT = 1536/256=6
+        ## [128, 129, 256, 273, 768]
+        if self.fusion in ['audio', 'video', 'MT']:
+            self.output = nn.Linear(mm_output_sizes[4], 1) ##  768
+        elif self.fusion in ['add', 'multi']:
+            self.output = nn.Linear(mm_output_sizes[0], 1) ##  128
+        elif self.fusion in ['concat']:
+            self.output = nn.Linear(mm_output_sizes[3], 1) ##  273
+        elif self.fusion in ['tensor_fusion']:
+            self.output = nn.Linear(mm_output_sizes[1], 1) ##  129
         else:
-            self.output = nn.Linear(mm_output_sizes[-1], 1) ## DepMamba = 2, MultiModalDepDet = 1, MT = 1536/256=6
+            self.output = nn.Linear(mm_output_sizes[2], 1) ##  256
 
         self.m = nn.Sigmoid()
 
@@ -65,7 +74,6 @@ class MultiModalDepDet(BaseNet):
         e_dim               =   128
         input_dim_video     =   128
         input_dim_audio     =   128
-        self.fusion         =   fusion
 
         if self.fusion in ['lt', 'it']:
             if self.fusion  == 'lt':
@@ -212,24 +220,67 @@ class MultiModalDepDet(BaseNet):
 
         ## dropout
         xa = self.audio_dropout(xa)
+        audio_feat = xa 
         xv = self.visual_dropout(xv)
+        video_feat = xv 
 
         ## `Conv1D block`
         xa = xa.permute(0, 2, 1)  # Shape: [8, 768, 146]
-        xa = self.conv1d_block_audio(xa) # torch.Size([8, 512, 145])
+        xa = self.conv1d_block_audio(xa) # torch.Size([8, 512, 145]) 
         
         xv = xv.permute(0, 2, 1)  # Shape: [8, 768, 129]
         xv = self.conv1d_block_visual(xv)  # torch.Size([8, 512, 128])
 
         ##-------------------------------------------------------------------
-        if self.fusion == 'lt':
+        ## Single Modality ==> [audio, video]
+        if self.fusion == 'audio':
+            # print(f"audio_feat: {audio_feat.shape}")
+            z = audio_feat.mean([1]) # torch.Size([8, 768]) # mean accross temporal dimension
+            z = self.fusion_dropout(z)
+            # print(f"z: {z.shape}")
+            return z
+
+        elif self.fusion == 'video':
+            # print(f"video_feat: {video_feat.shape}")
+            z = video_feat.mean([1]) # torch.Size([8, 768]) # mean accross temporal dimension
+            z = self.fusion_dropout(z)
+            # print(f"z: {z.shape}")
+            return z
+
+        ##-------------------------------------------------------------------
+        ## Proposed fusion strategies ==> [LT, IT, IA, MT]
+        elif self.fusion == 'lt':
             h_av, h_va = self.late_transformer_fusion(xa, xv)
+
+            audio_pooled = h_av.mean([1]) # torch.Size([8, 128]) # mean accross temporal dimension
+            video_pooled = h_va.mean([1]) # torch.Size([8, 128])
+
+            x = torch.cat((audio_pooled, video_pooled), dim=-1)  # torch.Size([8, 256])
+
+            x = self.fusion_dropout(x)
+            return x
 
         elif self.fusion == 'it':
             h_av, h_va = self.intermediate_transformer_fusion(xa, xv)
 
+            audio_pooled = h_av.mean([1]) # torch.Size([8, 128]) # mean accross temporal dimension
+            video_pooled = h_va.mean([1]) # torch.Size([8, 128])
+
+            x = torch.cat((audio_pooled, video_pooled), dim=-1)  # torch.Size([8, 256])
+
+            x = self.fusion_dropout(x)
+            return x
+
         elif self.fusion == 'ia':
             h_av, h_va = self.intermediate_attention_fusion(xa, xv)
+
+            audio_pooled = h_av.mean([1]) # torch.Size([8, 128]) # mean accross temporal dimension
+            video_pooled = h_va.mean([1]) # torch.Size([8, 128])
+
+            x = torch.cat((audio_pooled, video_pooled), dim=-1)  # torch.Size([8, 256])
+
+            x = self.fusion_dropout(x)
+            return x
 
         elif self.fusion == 'MT':
             mutual_fused_feats = self.mutualtransformer(xa, xv) # torch.Size([8, 512, 768])
@@ -240,7 +291,6 @@ class MultiModalDepDet(BaseNet):
             # pooled_features = torch.cat([pooled_adaptive_avg, pooled_adaptive_max], dim=1) # concatenate along the feature dimension. #torch.Size([8, 1536])
             # z = pooled_features
             
-
             #2
             # ## Encoder for fused audio-visual features
             # xav_fused = self.av_encoder(mutual_fused_feats)
@@ -248,21 +298,79 @@ class MultiModalDepDet(BaseNet):
            
             # #3
             # mean accross temporal dimension
-            z = torch.mean(mutual_fused_feats, dim=1)
+            z = torch.mean(mutual_fused_feats, dim=1) # torch.Size([8, 768])
 
             z = self.fusion_dropout(z)
             return z
-
         ##-------------------------------------------------------------------
+        ### Abalation Study ==> [add, multi, concat, tensor_fusion]
+        elif self.fusion =='add':
+            # print(xa.shape, xv.shape) ## torch.Size([8, 512, 145]) torch.Size([8, 512, 128])
 
-        audio_pooled = h_av.mean([1]) # torch.Size([8, 128]) # mean accross temporal dimension
-        video_pooled = h_va.mean([1]) # torch.Size([8, 128])
+            ## Element wise adddistion #  Truncation:
+            min_len = min(xa.shape[-1], xv.shape[-1])
+            x_add = xa[:, :, :min_len] + xv[:, :, :min_len]
+            # print(f"x_ablation shape after truncation: {x_add.shape}") # Output: torch.Size([8, 512, 128])
 
-        x = torch.cat((audio_pooled, video_pooled), dim=-1)  # torch.Size([8, 256])
+            x_add_h_pool = x_add.mean([1]) # mean accross temporal dimension
+            # print(f"x_add_h_pool: {x_add_h_pool.shape}") # x_add_h_pool: torch.Size([8, 128])
 
-        x = self.fusion_dropout(x)
+            z = self.fusion_dropout(x_add_h_pool)
+            return z
 
-        return x
+        elif self.fusion == 'multi':
+            # print(xa.shape, xv.shape) ## torch.Size([8, 512, 145]) torch.Size([8, 512, 128])
+
+            ## Element wise multiplication with Truncation:
+            min_len = min(xa.shape[-1], xv.shape[-1])
+            x_mul = xa[:, :, :min_len] * xv[:, :, :min_len]
+            # print(f"x_ablation shape after truncation: {x_mul.shape}") # Output: torch.Size([8, 512, 128])
+
+            x_mul_h_pool = x_mul.mean([1]) # mean across temporal dimension
+            # print(f"x_mul_h_pool: {x_mul_h_pool.shape}") # x_mul_h_pool: torch.Size([8, 128])
+
+            z = self.fusion_dropout(x_mul_h_pool)
+            return z
+
+        elif self.fusion == 'concat':
+            ## Concatenation along the last dimension
+            x_concat = torch.cat((xa, xv), dim=-1)
+            # print(f"x concat: {x_concat.shape}") ## torch.Size([8, 512, 273])
+
+            x_concat_h_pool = x_concat.mean([1]) # mean across temporal dimension
+            # print(f"x_concat_h_pool: {x_concat_h_pool.shape}") # torch.Size([8, 273])
+
+            z = self.fusion_dropout(x_concat_h_pool)
+            return z
+        
+        elif self.fusion == 'tensor_fusion':
+            ## Tensor Fusion Network (TFN) inspired fusion
+            batch_size, num_modalities, feature_dim_xa = xa.shape[0], 2, xa.shape[-1]
+            feature_dim_xv = xv.shape[-1]
+            min_feature_dim = min(feature_dim_xa, feature_dim_xv)
+
+            # Truncate features
+            xa_truncated = xa[:, :, :min_feature_dim] # [batch_size, 512, min_feature_dim]
+            xv_truncated = xv[:, :, :min_feature_dim] # [batch_size, 512, min_feature_dim]
+
+            # Polynomial expansion (simplified for two modalities)
+            xa_poly = torch.cat([torch.ones(batch_size, 512, 1).to(xa.device), xa_truncated], dim=-1) # [batch_size, 512, min_feature_dim + 1]
+            xv_poly = torch.cat([torch.ones(batch_size, 512, 1).to(xv.device), xv_truncated], dim=-1) # [batch_size, 512, min_feature_dim + 1]
+
+            # Outer product for fusion (across the feature dimension)
+            fused_tensor = torch.einsum('bij,bik->bijk', xa_poly, xv_poly) # [batch_size, 512, min_feature_dim + 1, min_feature_dim + 1]
+
+            # Mean across the temporal dimension
+            fused_pooled = fused_tensor.mean(dim=1) # [batch_size, min_feature_dim + 1, min_feature_dim + 1]
+            # print(fused_pooled.shape) # torch.Size([8, 129, 129])
+
+            # Flatten for dropout
+            fused_flattened = fused_pooled.mean([1]) # mean across temporal dimension
+            # print(fused_flattened.shape) # torch.Size([8, 129])
+
+            z = self.fusion_dropout(fused_flattened)
+            return z
+        ##-------------------------------------------------------------------
 
     def classifier(self, x):
         return self.output(x)
