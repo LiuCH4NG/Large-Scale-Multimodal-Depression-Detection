@@ -65,7 +65,7 @@ if __name__ == "__main__":
     model = "MultiModalDepDet"
 
     dataset = "dvlog-dataset" # ["dvlog-dataset", "lmvd-dataset"]
-    fusion = "lt" # ["lt", "it", "ia", "audio", "video" ]  # Specify the fusion type you want to analyze
+    fusion = "lt_cross" # ["lt", "it", "ia", "audio", "video" ]  # Specify the fusion type you want to analyze
     num_folds = 10
 
     # Compute the mean and std for the specified fusion
