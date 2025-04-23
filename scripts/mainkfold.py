@@ -76,6 +76,8 @@ def parse_args():
     parser.add_argument("-tqdm", "--tqdm_able", type=bool)
     parser.add_argument("-tr", "--train", type=bool, 
                         help='Whether you want to training or not!')
+    parser.add_argument("--cross_infer", default=False, type=bool,
+                        help="Exchange the dataset name and model")
     parser.add_argument("-d", "--device", type=str, nargs="*")
     parser.add_argument('-n_h', '--num_heads', default=1, type=int, 
                         help='number of heads, in the paper 1 or 4')
@@ -137,6 +139,13 @@ def main():
     kf = KFold(n_splits=args.num_folds, shuffle=True, random_state=42)
     all_indices = np.arange(len(combined_dataset))
 
+    if args.cross_infer:
+        # Automatically switch dataset
+        if args.dataset == "dvlog-dataset":
+            args.dataset = "lmvd-dataset"
+        elif args.dataset == "lmvd-dataset":
+            args.dataset = "dvlog-dataset"
+
     for fold, (train_indices, val_indices) in enumerate(kf.split(all_indices)):
         if fold < args.start_fold:
             LOG_INFO(f"Skipping Fold {fold+1}/{args.num_folds}")
@@ -151,11 +160,12 @@ def main():
             )
             args = wandb.config
         # print(args)
-        
+
         # Build Save Dir
         os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}", exist_ok=True)
         os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/samples", exist_ok=True)
         os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints", exist_ok=True)
+        os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_cross/checkpoints", exist_ok=True)
 
         # spliting for trainig and validation
         train_subset = Subset(combined_dataset, train_indices.tolist())
@@ -253,11 +263,20 @@ def main():
         else:
             lr_scheduler = None
 
-        early_stopping = EarlyStopping(patience = 5, 
-                                       verbose = True, 
-                                       save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
-                        )
-        
+        ## For loss-based, acc-based early stopping
+        early_stopping = EarlyStopping(
+            patience=15,
+            delta=0.0,
+            verbose=True,
+            save_path=os.path.join(
+                args.save_dir,
+                f"{args.dataset}_{args.model}_cross" if args.cross_infer else f"{args.dataset}_{args.model}_{args.fusion}_{str(fold)}",
+                "checkpoints",
+                "best_model.pth"
+            ),
+            mode='max'  # or 'min' for loss and 'max' for accuracy, depending on your metric
+        )
+
         best_val_acc = -1.0
         best_test_acc = -1.0
 
@@ -287,34 +306,57 @@ def main():
             args.begin_epoch = 1
             best_val_acc = -1.0
 
+        if args.cross_infer: best_val_acc = -1.0
         if args.train:
-            for epoch in range(args.begin_epoch, args.epochs+1):
+            end_epoch = args.begin_epoch + 50 if args.cross_infer else args.epochs
+
+            for epoch in range(args.begin_epoch, end_epoch+1):
                 adjust_learning_rate(optimizer, epoch, args)
 
                 train_results = train_epoch(
                     net, train_loader_fold, loss_fn, optimizer, lr_scheduler,
-                    args.device, epoch, args.epochs, args.tqdm_able
+                    args.device, epoch, end_epoch, args.tqdm_able, cross_infer=args.cross_infer
                 )
-                val_results = val(net, val_loader_fold, loss_fn, args.device, args.tqdm_able, msg='additional metrics')
+                val_results = val(net, val_loader_fold, loss_fn, args.device, args.tqdm_able, msg='additional metrics', cross_infer=args.cross_infer)
 
                 # val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
                 val_acc = val_results["acc"] 
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
 
-                    state = {
-                        'epoch': epoch,
-                        'arch': args.model,
-                        'state_dict': net.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'best_val_acc': best_val_acc,
-                        'model': net
-                    }
-                    save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
-                    torch.save(state, save_path)
-                    LOG_INFO(f"[{args.model}_{args.fusion}]: Model saved at epoch {state['epoch']}: {save_path}  | val acc: {best_val_acc}", 'green')
+                if not args.cross_infer:
+                    if val_acc > best_val_acc:
+                        best_val_acc = val_acc
 
-                if early_stopping.early_stop: ## Early stop when it found increase loss or satuated
+                        state = {
+                            'epoch': epoch,
+                            'arch': args.model,
+                            'state_dict': net.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'best_val_acc': best_val_acc,
+                            'model': net
+                        }
+                        save_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
+                        torch.save(state, save_path)
+                        LOG_INFO(f"[{args.model}_{args.fusion}]: Model saved at epoch {state['epoch']}: {save_path}  | val acc: {best_val_acc}", 'green')
+
+                elif args.cross_infer:
+                    if val_acc > best_val_acc:
+                        best_val_acc = val_acc
+
+                        state = {
+                            'epoch': epoch,
+                            'arch': args.model,
+                            'state_dict': net.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'best_val_acc': best_val_acc,
+                            'model': net
+                        }
+                        save_path = f"{args.save_dir}/{args.dataset}_{args.model}_cross/checkpoints/best_model.pt"
+                        torch.save(state, save_path)
+                        LOG_INFO(f"[{args.model}_cross]: Model saved at epoch {state['epoch']}: {save_path}  | val acc: {best_val_acc}", 'green')
+
+                # Early stopping
+                early_stopping(val_acc, net)
+                if early_stopping.early_stop: ## Early stop when it found decrease acc/increase loss or satuated
                     LOG_INFO("Early stopping triggered", 'red')
                     break
 
@@ -328,24 +370,40 @@ def main():
                         "recall/val": val_results["recall"],
                         "f1/val": val_results["f1"]
                     })
-            
-        print(f"resume_path: {args.resume_path}")
 
         # upload the best model to wandb website
         # load the best model for testing
         with torch.no_grad():
-            if not args.resume_path or not os.path.exists(args.resume_path):
-                print("not resume_path")
-                best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
-                LOG_INFO(f"best_state_path: {best_state_path}")
-                checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
-                net.load_state_dict(
-                    checkpoint['state_dict']
+            if not args.cross_infer:
+                if not args.resume_path or not os.path.exists(args.resume_path):
+                    # print("not resume_path")
+                    best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt"
+                    LOG_INFO(f"best_state_path: {best_state_path}")
+                    checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
+                    net.load_state_dict(
+                        checkpoint['state_dict']
+                    )
+
+            elif args.cross_infer:
+                best_state_path = os.path.join(
+                    args.save_dir,
+                    f"{args.dataset}_{args.model}_cross",
+                    "checkpoints",
+                    "best_model.pt"
                 )
+                if os.path.isfile(best_state_path):
+                    LOG_INFO(f"best_state_path: {best_state_path}")
+                    checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
+                    net.load_state_dict(
+                        checkpoint['state_dict']
+                    )
+                else:
+                    LOG_INFO("No checkpoint found for cross_infer or resume_path provided.")
+
             net.eval()
             # test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able)
-            test_results = val(net, val_loader_fold, loss_fn, args.device,args.tqdm_able, msg='additional metrics')
-            LOG_INFO(f"[{args.dataset}_{args.model}_{args.fusion}] Test results:")
+            test_results = val(net, val_loader_fold, loss_fn, args.device,args.tqdm_able, msg='additional metrics', cross_infer=args.cross_infer)
+            # LOG_INFO(f"[{args.dataset}_{args.model}_{args.fusion}] Test results:")
             LOG_INFO(f"Test Result: {test_results}", "magenta")
             color_map = {
                 "loss": "red",
@@ -366,28 +424,42 @@ def main():
                 color = color_map.get(key, 'blue')  # Default to blue if key not found
                 LOG_INFO(f"{key}: {value:.4f}", color) # Format float values
 
-            with open(f'../results/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}.txt','w') as f:    
-                test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]},\
-                      Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0},\
-                        WA:{test_results["weighted_accuracy"]}, UA:{test_results["unweighted_accuracy"]},\
-                              WP:{test_results["weighted_precision"]}, UP:{test_results["unweighted_precision"]},\
-                                WR:{test_results["weighted_recall"]}, UR:{test_results["unweighted_recall"]},\
-                                    WF:{test_results["weighted_f1"]}, UF:{test_results["unweighted_f1"]}'
-                f.write(test_result_str)         
+            if args.cross_infer:
+                with open(f'../results/{args.dataset}_{args.model}_{args.fusion}_cross_{str(fold)}.txt','w') as f:    
+                    test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]},\
+                        Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0},\
+                            WA:{test_results["weighted_accuracy"]}, UA:{test_results["unweighted_accuracy"]},\
+                                WP:{test_results["weighted_precision"]}, UP:{test_results["unweighted_precision"]},\
+                                    WR:{test_results["weighted_recall"]}, UR:{test_results["unweighted_recall"]},\
+                                        WF:{test_results["weighted_f1"]}, UF:{test_results["unweighted_f1"]}'
+                    f.write(test_result_str)  
+            else:
+                with open(f'../results/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}.txt','w') as f:    
+                    test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]},\
+                        Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0},\
+                            WA:{test_results["weighted_accuracy"]}, UA:{test_results["unweighted_accuracy"]},\
+                                WP:{test_results["weighted_precision"]}, UP:{test_results["unweighted_precision"]},\
+                                    WR:{test_results["weighted_recall"]}, UR:{test_results["unweighted_recall"]},\
+                                        WF:{test_results["weighted_f1"]}, UF:{test_results["unweighted_f1"]}'
+                    f.write(test_result_str)    
 
-    if args.if_wandb:
-        artifact = wandb.Artifact("best_model", type="model")
-        artifact.add_file(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt")
 
-        wandb.run.summary["acc/best_val_acc"] = best_val_acc
-        wandb.log_artifact(artifact)
-        wandb.run.summary["acc/test_acc"] = test_results["acc"]
-        wandb.run.summary["loss/test_loss"] = test_results["loss"]
-        wandb.run.summary["precision/test_precision"] = test_results["precision"]
-        wandb.run.summary["recall/test_recall"] = test_results["recall"]
-        wandb.run.summary["f1/test_f1"] = test_results["f1"]
+        if args.if_wandb:
+            artifact = wandb.Artifact("best_model", type="model")
+            artifact.add_file(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}_{str(fold)}/checkpoints/best_model.pt")
 
-        wandb.finish()
+            wandb.run.summary["acc/best_val_acc"] = best_val_acc
+            wandb.log_artifact(artifact)
+            wandb.run.summary["acc/test_acc"] = test_results["acc"]
+            wandb.run.summary["loss/test_loss"] = test_results["loss"]
+            wandb.run.summary["precision/test_precision"] = test_results["precision"]
+            wandb.run.summary["recall/test_recall"] = test_results["recall"]
+            wandb.run.summary["f1/test_f1"] = test_results["f1"]
+
+            wandb.finish()
+
+        # clean up cuda memory cache after each fold
+        torch.cuda.empty_cache()
 
 if __name__ == '__main__':
     main()
