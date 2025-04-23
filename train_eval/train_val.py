@@ -7,10 +7,12 @@
 #----------------------------------------------------------------
 import torch
 from tqdm import tqdm
+from .utils import ShapeAdapter
+adapter = ShapeAdapter()
 
 def train_epoch(
     net, train_loader, loss_fn, optimizer, lr_scheduler, device, 
-    current_epoch, total_epochs, tqdm_able
+    current_epoch, total_epochs, tqdm_able, cross_infer=False
 ):
     """One training epoch.
     """
@@ -24,6 +26,12 @@ def train_epoch(
         leave=False, unit="batch", disable=tqdm_able
     ) as pbar:
         for x, y, mask in pbar:
+            # print(f"x shape: {x.shape}, y shape: {y.shape}") # lmvb: torch.Size([16, 2086, 264]), y shape: torch.Size([16])
+            #                                                  # dvlog: x shape: torch.Size([16, 1443, 161]), y shape: torch.Size([16])
+
+            ## doing cross infer
+            if cross_infer:
+                x = adapter(x)
            
             x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
             y_pred = net(x, mask)
@@ -59,7 +67,7 @@ def train_epoch(
 
 
 def val(
-    net, val_loader, loss_fn, device, tqdm_able
+    net, val_loader, loss_fn, device, tqdm_able, cross_infer=False
 ):
     """Test the model on the validation / test set.
     """
@@ -73,6 +81,10 @@ def val(
             val_loader, desc="Validating", leave=False, unit="batch", disable=tqdm_able
         ) as pbar:
             for x, y, mask in pbar:
+
+                ## doing cross infer
+                if cross_infer:
+                    x = adapter(x)
              
                 x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
                 y_pred = net(x, mask)
@@ -124,7 +136,7 @@ def val(
     }
 
 def val(
-    net, val_loader, loss_fn, device, tqdm_able, msg='additional metrics'
+    net, val_loader, loss_fn, device, tqdm_able, msg='additional metrics', cross_infer=False
 ):
     """Test the model on the validation / test set and calculate additional metrics.
     """
@@ -140,6 +152,11 @@ def val(
             val_loader, desc="Validating", leave=False, unit="batch", disable=tqdm_able
         ) as pbar:
             for x, y, mask in pbar:
+
+                ## doing cross infer
+                if cross_infer:
+                    # print("x cross infer")
+                    x = adapter(x)
 
                 x, y, mask = x.to(device), y.to(device).unsqueeze(1), mask.to(device)
                 y_pred = net(x, mask)
