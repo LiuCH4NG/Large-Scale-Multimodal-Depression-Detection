@@ -6,6 +6,8 @@
 # imports
 #----------------------------------------------------------------
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from termcolor import colored
 
@@ -20,42 +22,44 @@ def LOG_INFO(msg,mcolor='blue'):
 
 # Early stopping implementation
 class EarlyStopping:
-    def __init__(self, patience=15, delta=0, verbose=False, save_path=None):
+    def __init__(self, patience=15, delta=0.0, verbose=False, save_path=None, mode='min'):
         self.patience = patience
         self.delta = delta
         self.verbose = verbose
         self.save_path = save_path
         self.counter = 0
-        self.best_loss = None
+        self.best_score = None
         self.early_stop = False
         self.best_model = None
+        assert mode in ['min', 'max'], "mode must be 'min' for loss or 'max' for accuracy"
+        self.mode = mode
 
-    def __call__(self, val_loss, model):
-        if self.best_loss is None:
-            self.best_loss = val_loss
-            self.save_checkpoint(val_loss, model)
-        elif val_loss > self.best_loss + self.delta:
+    def __call__(self, val_metric, model):
+        if self.best_score is None:
+            self.best_score = val_metric
+            self.save_checkpoint(val_metric, model)
+        elif (self.mode == 'min' and val_metric > self.best_score + self.delta) or \
+             (self.mode == 'max' and val_metric < self.best_score - self.delta):
             self.counter += 1
             if self.verbose:
                 print(f"EarlyStopping counter: {self.counter}/{self.patience}")
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
-            self.best_loss = val_loss
-            self.save_checkpoint(val_loss, model)
+            self.best_score = val_metric
+            self.save_checkpoint(val_metric, model)
             self.counter = 0
 
-    def save_checkpoint(self, val_loss, model):
+    def save_checkpoint(self, val_metric, model):
         if self.save_path:
             torch.save(model.state_dict(), self.save_path)
         if self.verbose:
-            print(f"Validation loss decreased to {val_loss:.6f}. Saving model...")
+            print(f"{'Loss' if self.mode=='min' else 'Accuracy'} improved to {val_metric:.6f}. Saving model...")
         self.best_model = model.state_dict()
 
     def load_best_model(self, model):
         if self.best_model is not None:
             model.load_state_dict(self.best_model)
-
 
 def collate_fn(batch):
     # Assuming x is the data and y is the label
@@ -80,3 +84,58 @@ def adjust_learning_rate(optimizer, epoch, args):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr_new
         # param_group['lr'] = opt.learning_rate
+
+
+# -------------------------------
+# Define the ShapeAdapter module
+# -------------------------------
+class ShapeAdapter(nn.Module):
+    def __init__(self, lmvd_dim=264, dvlog_dim=161, lmvd_time=2086, dvlog_time=1443):
+        super().__init__()
+        self.lmvd_dim = lmvd_dim
+        self.dvlog_dim = dvlog_dim
+        self.lmvd_time = lmvd_time
+        self.dvlog_time = dvlog_time
+
+        # Define both directions
+        self.lmvd_to_dvlog = nn.Linear(lmvd_dim, dvlog_dim)
+        self.dvlog_to_lmvd = nn.Linear(dvlog_dim, lmvd_dim)
+
+    def forward(self, x):
+        # x: [B, T, D]
+        B, T, D = x.shape
+
+        if D == self.lmvd_dim:
+            # Convert LMVD → DVLOG
+            x = F.interpolate(x.permute(0, 2, 1), size=T, mode='linear', align_corners=False)
+            x = x.permute(0, 2, 1)  # [B, T_out, D]
+            x = self.lmvd_to_dvlog(x)  # [B, 1443, 161]
+
+        elif D == self.dvlog_dim:
+            # Convert DVLOG → LMVD
+            x = F.interpolate(x.permute(0, 2, 1), size=T, mode='linear', align_corners=False)
+            x = x.permute(0, 2, 1)  # [B, T_out, D]
+            x = self.dvlog_to_lmvd(x)  # [B, 2086, 264]
+
+        else:
+            raise ValueError(f"Unsupported input dim: {D}, expected {self.lmvd_dim} or {self.dvlog_dim}")
+
+        return x
+
+if __name__ == '__main__':
+    # -------------------------------
+    # Simulate Input
+    # -------------------------------
+    
+    adapter = ShapeAdapter()
+
+    # LMVD to DVLOG
+    x_lmvd = torch.randn(16, 2086, 264)
+    x_dvlog = adapter(x_lmvd)
+    print(f"LMVD to DVLOG: {x_dvlog.shape}")  # [16, 1443, 161]
+
+    # DVLOG to LMVD
+    x_dvlog_input = torch.randn(16, 1443, 161)
+    x_lmvd_out = adapter(x_dvlog_input)
+    print(f"DVLOG to LMVD: {x_lmvd_out.shape}")  # [16, 2086, 264]
+
