@@ -17,6 +17,7 @@ import random
 import yaml
 import wandb
 import torch
+import gc 
 from tqdm import tqdm
 import sys
 sys.path.append('../')
@@ -77,13 +78,13 @@ def parse_args():
     parser.add_argument("-tqdm", "--tqdm_able", type=bool)
     parser.add_argument("-tr", "--train", type=bool, 
                         help='Whether you want to training or not!')
+    parser.add_argument("--cross_infer", default=False, type=bool,
+                        help="Exchange the dataset name and model")
     parser.add_argument("-d", "--device", type=str, nargs="*")
     parser.add_argument('-n_h', '--num_heads', default=1, type=int, 
                         help='number of heads, in the paper 1 or 4')
     parser.add_argument('-fus', '--fusion', default='ia', type=str, 
                         help='fusion type: lt | it | ia | MT')
-    parser.add_argument('-folds', '--num_folds', default=5, type=int, 
-                        help='Number of Folds')
     parser.add_argument('--begin_epoch', default=1, type=int,
                         help='Training begins at this epoch. Previous trained model indicated by resume_path is loaded.')
     parser.add_argument('--resume_path', default='', type=str, help='Save data (.pth) of previous training')
@@ -127,6 +128,13 @@ def main():
         )
         args = wandb.config
     print(args)
+
+    if args.cross_infer:
+        # Automatically switch dataset
+        if args.dataset == "dvlog-dataset":
+            args.dataset = "lmvd-dataset"
+        elif args.dataset == "lmvd-dataset":
+            args.dataset = "dvlog-dataset"
     
     # Build Save Dir
     os.makedirs(f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}", exist_ok=True)
@@ -142,8 +150,10 @@ def main():
     elif args.model == "MultiModalDepDet":
         if args.dataset=='lmvd-dataset':
             net = MultiModalDepDet(**args.lmvd, fusion=args.fusion, num_heads=args.num_heads)
+            # net = MultiModalDepDet(**args.dvlog, fusion=args.fusion, num_heads=args.num_heads)
         elif args.dataset=='dvlog-dataset':
             net = MultiModalDepDet(**args.dvlog, fusion=args.fusion, num_heads=args.num_heads)
+            # net = MultiModalDepDet(**args.lmvd, fusion=args.fusion, num_heads=args.num_heads)
     else:
         raise NotImplementedError(f"The {args.model} method has not been implemented by this repo")
     
@@ -161,42 +171,6 @@ def main():
         print("Total number of trainable parameters: ", pytorch_total_params)
         pytorch_total_params_ = sum(p.numel() for p in net.parameters())
         print("Total number of parameters: ", pytorch_total_params_)
-
-    ###-------------------------------------------------------------------------
-    # # Replace the original device handling code with the following:
-    # # Process device selection
-    # if args.device[0].startswith('cuda'):
-    #     if not torch.cuda.is_available():
-    #         print("CUDA is not available, switching to CPU.")
-    #         args.device = ['cpu']
-    #     else:
-    #         # Extract GPU indices from device list
-    #         available_gpus = [f'cuda:{i}' for i in range(torch.cuda.device_count())]
-    #         valid_devices = [d for d in args.device if d in available_gpus]
-            
-    #         if not valid_devices:
-    #             print(f"No valid CUDA devices in {args.device}. Available: {available_gpus}. Switching to CPU.")
-    #             args.device = ['cpu']
-    #         else:
-    #             args.device = valid_devices
-    # else:
-    #     args.device = ['cpu']
-
-    # print(f"Using devices: {args.device}")
-
-    # # Move model to appropriate device(s)
-    # if len(args.device) > 1 and all(d.startswith('cuda') for d in args.device):
-    #     device_ids = [int(d.split(':')[1]) for d in args.device]
-    #     print(f"Using DataParallel with GPU devices: {device_ids}")
-    #     net = torch.nn.DataParallel(net, device_ids=device_ids)
-    #     # DataParallel will automatically use the first device in device_ids
-    #     net = net.to(f'cuda:{device_ids[0]}')
-    # else:
-    #     device = args.device[0]
-    #     print(f"Using single device: {device}")
-    #     net = net.to(device)
-
-    ###-------------------------------------------------------------------------
 
     # set other training components
     loss_fn = CombinedLoss(lambda_reg=1e-5, 
@@ -264,14 +238,34 @@ def main():
     best_val_acc = -1.0
     best_test_acc = -1.0
 
-    if args.resume_path:
+    # Check for fold-specific best model
+    fold_best_model_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
+    print(fold_best_model_path)
+    if os.path.exists(fold_best_model_path) and not args.resume_path:  # Only check fold-specific if no resume_path
+        print(f"Resuming from fold-specific checkpoint: {fold_best_model_path}")
+        checkpoint = torch.load(fold_best_model_path, map_location=args.device, weights_only=False)
+        # checkpoint = torch.load(fold_best_model_path, weights_only=False)
+        assert args.model == checkpoint['arch']
+        best_val_acc = checkpoint['best_val_acc']
+        print(f"Loaded Model Best Val Acc: {best_val_acc}")
+        args.begin_epoch = checkpoint['epoch'] + 1  # Start from next epoch
+        print(f"Ended Epoch: {checkpoint['epoch']} and Begining Epoch: {args.begin_epoch}")
+        # print(checkpoint['state_dict'])
+        net.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+
+    elif args.resume_path:
         print('loading checkpoint {}'.format(args.resume_path))
         checkpoint = torch.load(args.resume_path, weights_only=False)
         assert args.model == checkpoint['arch']
         best_val_acc = checkpoint['best_val_acc']
-        print(f"Loaded Model Best Val Acc: {best_val_acc}")
-        args.begin_epoch = checkpoint['epoch']
+        print("Loaded Model Best Val Acc: {best_val_acc}")
+        args.begin_epoch = checkpoint['epoch'] + 1
+        print(f"Ended Epoch: {checkpoint['epoch']} and Begining Epoch: {args.begin_epoch}")
         net.load_state_dict(checkpoint['state_dict'])
+    else:
+        args.begin_epoch = 1
+        best_val_acc = -1.0
 
     print(f"Training: {args.train}")
     if args.train:
@@ -282,7 +276,7 @@ def main():
                 net, train_loader, loss_fn, optimizer, lr_scheduler,
                 args.device, epoch, args.epochs, args.tqdm_able
             )
-            val_results = val(net, val_loader, loss_fn, args.device, args.tqdm_able)
+            val_results = val(net, val_loader, loss_fn, args.device, args.tqdm_able, msg='additional metrics', cross_infer=args.cross_infer)
 
             # val_acc = (val_results["acc"] + val_results["precision"]+ val_results["recall"]+ val_results["f1"])/4.0
             val_acc = val_results["acc"] 
@@ -316,13 +310,13 @@ def main():
                     "f1/val": val_results["f1"]
                 })
         
-    print(f"resume_path: {args.resume_path}")
+    # print(f"resume_path: {args.resume_path}")
 
     # upload the best model to wandb website
     # load the best model for testing
     with torch.no_grad():
         if not args.resume_path:
-            print("not resume_path")
+            # print("not resume_path")
             best_state_path = f"{args.save_dir}/{args.dataset}_{args.model}_{args.fusion}/checkpoints/best_model.pt"
             LOG_INFO(f"best_state_path: {best_state_path}")
             checkpoint = torch.load(best_state_path, map_location=args.device, weights_only=False)
@@ -331,12 +325,35 @@ def main():
             )
 
         net.eval()
-        test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able)
-        print("Test results:")
-        print(test_results)
+        test_results = val(net, test_loader, loss_fn, args.device,args.tqdm_able, msg='additional metrics', cross_infer=args.cross_infer)
+        LOG_INFO(f"[{args.dataset}_{args.model}_{args.fusion}] Test results:")
+        LOG_INFO(f"Test Result: {test_results}", "magenta")
+        color_map = {
+            "loss": "red",
+            "acc": "cyan",
+            "precision": "magenta",
+            "recall": "yellow",
+            "f1": "green",
+            "weighted_accuracy": "blue",
+            "unweighted_accuracy": "light_blue",
+            "weighted_precision": "light_magenta",
+            "unweighted_precision": "light_yellow",
+            "weighted_recall": "light_cyan",
+            "unweighted_recall": "light_green",
+            "weighted_f1": "white",
+            "unweighted_f1": "light_grey",
+        }
+        for key, value in test_results.items():
+            color = color_map.get(key, 'blue')  # Default to blue if key not found
+            LOG_INFO(f"{key}: {value:.4f}", color) # Format float values
 
         with open(f'../results/{args.dataset}_{args.model}_{args.fusion}.txt','w') as f:    
-            test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]}, Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0}'
+            test_result_str = f'Accuracy:{test_results["acc"]}, Precision:{test_results["precision"]}, Recall:{test_results["recall"]}, F1:{test_results["f1"]},\
+                    Avg:{(test_results["acc"] + test_results["precision"]+ test_results["recall"]+ test_results["f1"])/4.0},\
+                    WA:{test_results["weighted_accuracy"]}, UA:{test_results["unweighted_accuracy"]},\
+                            WP:{test_results["weighted_precision"]}, UP:{test_results["unweighted_precision"]},\
+                            WR:{test_results["weighted_recall"]}, UR:{test_results["unweighted_recall"]},\
+                                WF:{test_results["weighted_f1"]}, UF:{test_results["unweighted_f1"]}'
             f.write(test_result_str)         
 
     if args.if_wandb:
@@ -352,6 +369,21 @@ def main():
         wandb.run.summary["f1/test_f1"] = test_results["f1"]
 
         wandb.finish()
+
+    del net 
+    del optimizer
+    del lr_scheduler
+    del early_stopping
+    del loss_fn 
+
+    del train_loader
+    del val_loader
+    del test_loader
+
+    gc.collect
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    
 
 if __name__ == '__main__':
     main()
