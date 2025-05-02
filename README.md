@@ -133,6 +133,29 @@ python mainkfold.py --train True --if_wandb True --tqdm_able False \
 ```
 
 ---
+
+#### ✅ All-in-One Command
+
+```bash
+python mainkfold.py \
+  --train True \
+  --num_folds 10 \
+  --start_fold 0 \
+  --epochs 225 \
+  --batch_size 16 \
+  --learning_rate 1e-5 \
+  --model MultiModalDepDet \
+  --fusion lt \
+  --dataset lmvd-dataset \
+  --device cuda \
+  --cross_infer False \
+  --resume_path "" \
+  --begin_epoch 1 \
+  --if_wandb False \
+  --tqdm_able True \
+  --num_heads 1
+```
+---
 ---
 
 
