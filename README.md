@@ -1,5 +1,7 @@
 # Large-Scale-Multimodal-Depression-Detection
-MMFformer: Multimodal Fusion Transformer Network for Depression Detection
+Paper Title: **MMFformer: Multimodal Fusion Transformer Network for Depression Detection**
+
+#### ***Proceedings of the 2025 IEEE International Conference on Systems, Man, and Cybernetics (SMC), Vienna, Austria. Copyright 2025 by the author(s).***
 ----
 
 **python implementation**
@@ -156,38 +158,22 @@ python mainkfold.py \
   --num_heads 1
 ```
 ---
----
 
+### 📖 Citation
 
-<!-- ### 2. Training and Testing
-
-#### Training
-
-```bash
-$ python main.py --train True --epochs 125 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --dataset dvlog-dataset
-
-$ python main.py --train True --epochs 125 --batch_size 16 --learning_rate 1e-5 --model MultiModalDepDet --dataset lmvd-dataset
-```
-
-#### Testing
-
-```bash
-$ python main.py --model MultiModalDepDet --dataset dvlog-dataset
-
-$ python main.py --model MultiModalDepDet --dataset lmvd-dataset
-``` -->
-
-
-<!-- ## 📖 Citation
-
-- If you find this project useful for your research, please cite [our paper](https://arxiv.org/abs/2409.15936):
+- If you find this project useful for your research, please cite [our paper](https://arxiv.org/abs/****.*****):
 
 ```bibtex
-@inproceedings{yedepmamba,
-  title={DepMamba: Progressive Fusion Mamba for Multimodal Depression Detection},
-  author = {Jiaxin Ye and Junping Zhang and Hongming Shan},
-  booktitle = {ICASSP 2025 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), Hyderabad, India, April 06-11, 2025},
-  pages={1--5},
+@inproceedings{haque2025mmfformer,
+  title={MMFformer: Multimodal Fusion Transformer Network for Depression Detection},
+  author={Haque, Md Rezwanul and Islam, Md. Milon and Raju, S M Taslim Uddin and Altaheri, Hamdi and Nassar, Lobna and Karray, Fakhri},
+  journal = {arXiv preprint arXiv:****.*****},
   year = {2025}
 }
-``` -->
+```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
