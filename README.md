@@ -1,7 +1,23 @@
 # Large-Scale-Multimodal-Depression-Detection
-Paper Title: **MMFformer: Multimodal Fusion Transformer Network for Depression Detection**
+
+This repository is the official implementation of the following paper.
+
+Paper Title: **[MMFformer: Multimodal Fusion Transformer Network for Depression Detection](https://arxiv.org/abs/2508.06701)**
+<br/>
+[Md Rezwanul Haque](https://scholar.google.com/citations?user=HaI-oFUAAAAJ&hl=en), [Md. Milon Islam](https://scholar.google.com/citations?user=ABC_LOAAAAAJ&hl=en), [S M Taslim Uddin Raju](https://scholar.google.com/citations?user=ToadRS8AAAAJ&hl=en), [Hamdi Altaheri](https://scholar.google.com/citations?user=UkfsK6EAAAAJ&hl=en), [Lobna Nassar](https://scholar.google.com/citations?user=3vcIuocAAAAJ&hl=en), [Fakhri Karray](https://uwaterloo.ca/scholar/karray)
+<br/>
 
 #### ***Proceedings of the 2025 IEEE International Conference on Systems, Man, and Cybernetics (SMC), Vienna, Austria. Copyright 2025 by the author(s).***
+
+[![arXiv](https://img.shields.io/badge/arXiv-2508.06701-b31b1b)](https://arxiv.org/abs/2508.06701)
+
+
+![](assets/mff_arch.png)
+
+
+## Abstract
+> Depression is a serious mental health illness that significantly affects an individual’s well-being and quality of life, making early detection crucial for adequate care and treatment. Detecting depression is often difficult, as it is based primarily on subjective evaluations during clinical interviews. Hence, the early diagnosis of depression, thanks to the content of social networks, has become a prominent research area. The extensive and diverse nature of user-generated information poses a significant challenge, limiting the accurate extraction of relevant temporal information and the effective fusion of data across multiple modalities. This paper introduces MMFformer, a multimodal depression detection network designed to retrieve depressive spatio-temporal high-level patterns from multimodal social media information. The transformer network with residual connections captures spatial features from videos, and a transformer encoder is exploited to design important temporal dynamics in audio. Moreover, the fusion architecture fused the extracted features through late and intermediate fusion strategies to find out the most relevant intermodal correlations among them. Finally, the proposed network is assessed on two large-scale depression detection datasets, and the results clearly reveal that it surpasses existing state-of-the-art approaches, improving the F1-Score by 13.92% for D-Vlog dataset and 7.74% for LMVD dataset. The code is made available publicly at https://github.com/rezwanh001/Large-Scale-Multimodal-Depression-Detection.
+
 ----
 
 **python implementation**
@@ -164,11 +180,11 @@ python mainkfold.py \
 - If you find this project useful for your research, please cite [our paper](https://arxiv.org/abs/****.*****):
 
 ```bibtex
-@inproceedings{haque2025mmfformer,
-  title={MMFformer: Multimodal Fusion Transformer Network for Depression Detection},
-  author={Haque, Md Rezwanul and Islam, Md. Milon and Raju, S M Taslim Uddin and Altaheri, Hamdi and Nassar, Lobna and Karray, Fakhri},
-  journal = {arXiv preprint arXiv:****.*****},
-  year = {2025}
+@article{haque2025mmfformer,
+  title = {MMFformer: Multimodal Fusion Transformer Network for Depression Detection},
+  author = {Haque, Md Rezwanul and Islam, Md Milon and Raju, SM and Altaheri, Hamdi and Nassar, Lobna and Karray, Fakhri},
+  journal = {arXiv preprint arXiv:2508.06701},
+  year = {2025},
 }
 ```
 
