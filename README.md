@@ -49,6 +49,13 @@ We use the [D-Vlog](https://doi.org/10.1609/aaai.v36i11.21483) and [LMVD](https:
 Following D-Vlog's setup, the dataset is split into train, validation and test sets with a 7:1:2 ratio. For the LMVD without official splitting, we randomly split the LMVD with a 7:1:2 ratio ~~a 8:1:1 ratio~~ and the specific division is stored in `../data/lmvd-dataset/lmvd_labels.csv'. 
 
 Furthermore, you can run ``lmvd_extract_npy.py`` to obtain .npy features to train the model. You also can make labels with this code ``lmvd_prepare_labels.py``.
+
+- **Note:** The pretrained model can be found [here](https://drive.google.com/file/d/1tA3HzeZh5Cvw78VjDAOBNQF6ZwmBuKPT/view?usp=sharing). [`ckpt_path='../pretrained_models/visualmae_pretrained.pth'`]
+
+The pretrained model can be found here
+:
+ckpt_path='../pretrained_models/visualmae_pretrained.pth'
+
 ---
 
 Thanks for the clarification. Based on your existing `parse_args()` and the provided training command, here are some **commonly used command-line examples** that work well for **both training and testing scenarios** using `mainkfold.py`. Each example assumes your script handles them appropriately.
