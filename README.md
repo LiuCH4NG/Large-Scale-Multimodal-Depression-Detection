@@ -52,10 +52,6 @@ Furthermore, you can run ``lmvd_extract_npy.py`` to obtain .npy features to trai
 
 - **Note:** The pretrained model can be found [here](https://drive.google.com/file/d/1tA3HzeZh5Cvw78VjDAOBNQF6ZwmBuKPT/view?usp=sharing). [`ckpt_path='../pretrained_models/visualmae_pretrained.pth'`]
 
-The pretrained model can be found here
-:
-ckpt_path='../pretrained_models/visualmae_pretrained.pth'
-
 ---
 
 Thanks for the clarification. Based on your existing `parse_args()` and the provided training command, here are some **commonly used command-line examples** that work well for **both training and testing scenarios** using `mainkfold.py`. Each example assumes your script handles them appropriately.
